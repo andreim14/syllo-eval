@@ -85,10 +85,10 @@ class SettingsTest(unittest.TestCase):
     self.assertEqual(settings.host, 'localhost')
     self.assertEqual(settings.database, 'pg-padded')
 
-  def test_rejects_unsupported_judge_provider(self) -> None:
-    with patch.dict(os.environ, {'LLM_JUDGE_PROVIDER': 'anthropic'}, clear=True):
-      with self.assertRaises(ValueError):
-        LlmJudgeSettings()
+  def test_judge_provider_is_normalized_and_not_restricted_to_builtins(self) -> None:
+    # The service rejects names that are neither built in nor backed by an injected factory.
+    with patch.dict(os.environ, {'LLM_JUDGE_PROVIDER': ' Gateway '}, clear=True):
+      self.assertEqual(LlmJudgeSettings().provider, 'gateway')
 
   def test_blank_nested_environment_values_are_unset_before_json_decoding(self) -> None:
     with patch.dict(

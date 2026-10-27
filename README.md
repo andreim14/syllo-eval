@@ -341,7 +341,10 @@ A judge failure is a failed computation whose `metadata.failure` says why: `misa
 judged items), `truncated` (the output reached its token limit), `invalid_output`, `context_overflow`, `timeout` or
 `provider`. Failed computations keep the usage of every judge call, the failed one included when the provider reported
 it. Judge metrics are available only when `LLM_JUDGE_PROVIDER`
-is set, and claim-extractor metrics only when `ORBITALS_API_KEY` is also set.
+is set, and claim-extractor metrics only when `ORBITALS_API_KEY` is also set. To judge through another backend, pass
+`judge_client_factories={'my-gateway': build_client}` to `EvaluationService`, where `build_client(settings.llm_judge)`
+returns an `LlmJudgeClient`, and set `LLM_JUDGE_PROVIDER=my-gateway`. A `model` attribute on the client is recorded in
+`run.config`; an unknown provider name fails service construction.
 
 Judge prompts are versioned templates in `syllo_eval/evaluation/metrics/prompts/<prompt>/v<N>/`. Rubric additions are
 appended to a judge's system prompt under a header saying they can only make grading stricter; the built-in rubric and
@@ -376,7 +379,7 @@ In Python, you can build `Settings` directly instead.
 | `PHOENIX_API_KEY`, `PHOENIX_PROJECT_ID` | — | Phoenix authentication and project |
 | `PHOENIX_REQUEST_ID_ATTRIBUTE` | `request_id` | Root-span attribute matched against the request ID; dots address nested attributes, e.g. `metadata.request_id` |
 | `PHOENIX_REQUEST_ID_EXCLUDED_ROOT_SPAN_NAMES` | `[]` | JSON list of root span names to ignore when resolving request IDs |
-| `LLM_JUDGE_PROVIDER` | — | `openai` or `gemini`; enables the judge metrics |
+| `LLM_JUDGE_PROVIDER` | — | `openai`, `gemini` or an injected factory's name; enables the judge metrics |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` | —, `https://api.openai.com/v1`, `gpt-5-mini` | OpenAI judge |
 | `OPENAI_USE_RESPONSES_API` | `true` | Set to `false` for OpenAI-compatible endpoints without the Responses API |
 | `GOOGLE_API_KEY`, `GEMINI_MODEL` | —, `gemini-3.1-flash-lite` | Gemini judge |

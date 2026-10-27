@@ -16,6 +16,7 @@ from syllo_eval.evaluation.trace_adapter import PhoenixTraceAdapter
 from syllo_eval.evaluation.trace_import import TraceImportError
 from syllo_eval.evaluation.trace_processor import TraceProcessingResult
 from syllo_eval.infrastructure.database import DatabaseManager
+from syllo_eval.infrastructure.exceptions import ConfigurationError
 from syllo_eval.model import (
   Agent,
   EvaluationRun,
@@ -862,6 +863,44 @@ class TestExtensionPoints(unittest.IsolatedAsyncioTestCase):
           sample_compute_timeout=None,
         )
     judge.aclose.assert_awaited_once_with()
+
+  async def test_injected_judge_factory_builds_named_provider(self) -> None:
+    judge = MagicMock(aclose=AsyncMock(), model='gateway-model')
+    factory = MagicMock(return_value=judge)
+    service = EvaluationService(
+      settings=Settings(llm_judge=LlmJudgeSettings(provider='Gateway')),
+      db_manager=cast(DatabaseManager, object()),
+      trace_integration=MagicMock(),
+      judge_client_factories={'gateway': factory},
+    )
+    with (
+      patch('syllo_eval.service.MetricRegistry.sync_with_persistence', new_callable=AsyncMock),
+      patch('syllo_eval.service.build_llm_judge_client') as build_builtin,
+    ):
+      execution = await service._build_execution_from_plan(
+        agent_id=uuid4(),
+        dataset_id=uuid4(),
+        selected_metric_names=['answer_correctness_judge'],
+        planned_sample_ids=[],
+        max_concurrent_samples=None,
+        max_concurrent_tasks=None,
+        sample_trace_timeout=None,
+        sample_compute_timeout=None,
+      )
+    factory.assert_called_once_with(service.settings.llm_judge)
+    build_builtin.assert_not_called()
+    snapshot = cast(dict[str, object], execution.config.config)
+    self.assertEqual(snapshot['llm_judge_provider'], 'gateway')
+    self.assertEqual(snapshot['llm_judge_model'], 'gateway-model')
+    await execution.close()
+    judge.aclose.assert_awaited_once_with()
+
+  def test_unknown_judge_provider_is_rejected(self) -> None:
+    with self.assertRaisesRegex(ConfigurationError, 'unsupported provider: gateway'):
+      EvaluationService(
+        settings=Settings(llm_judge=LlmJudgeSettings(provider='gateway')),
+        db_manager=cast(DatabaseManager, object()),
+      )
 
   async def test_builtin_judge_resource_closes_after_failure(self) -> None:
     judge_client, execution = await self._build_judge_execution()

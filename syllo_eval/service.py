@@ -43,9 +43,13 @@ from syllo_eval.infrastructure.orbitals import OrbitalsClaimExtractorClient
 from syllo_eval.infrastructure.unit_of_work import TransactionalUnitOfWork, UnitOfWork
 from syllo_eval.model import EvaluationRun, EvaluationRunSample, EvaluationSampleStatus, EvaluationStatus
 from syllo_eval.orchestration.evaluation_orchestrator import EvaluationConfig, EvaluationOrchestrator
-from syllo_eval.settings import EnvSettings, EvaluationSettings, Settings
+from syllo_eval.settings import EnvSettings, EvaluationSettings, LlmJudgeSettings, Settings
 
 logger = logging.getLogger(__name__)
+
+# Builds the judge client for a provider name the engine does not ship, e.g. a private LLM gateway.
+JudgeClientFactory = Callable[[LlmJudgeSettings], LlmJudgeClient]
+_BUILTIN_JUDGE_PROVIDERS = frozenset({'openai', 'gemini'})
 
 
 class MetricSelectionError(ValueError):
@@ -279,6 +283,7 @@ class EvaluationService:
     trace_adapters_by_agent_name: Mapping[str, TraceAdapter] | None = None,
     trace_integration: TraceIntegration | None = None,
     trace_adapters_by_name: Mapping[str, TraceAdapter] | None = None,
+    judge_client_factories: Mapping[str, JudgeClientFactory] | None = None,
   ):
     if trace_client is not None and trace_integration is not None:
       raise ValueError('Supply either trace_client or trace_integration, not both')
@@ -298,6 +303,10 @@ class EvaluationService:
       raise ValueError('Supply trace adapters or a trace integration, not both')
     self._trace_client = trace_client
     self._trace_integration = trace_integration
+    self._judge_client_factories = _normalize_names(judge_client_factories or {}, 'Judge client factory')
+    provider = self._settings.llm_judge.provider
+    if provider is not None and provider not in _BUILTIN_JUDGE_PROVIDERS | self._judge_client_factories.keys():
+      raise ConfigurationError('llm_judge', 'provider', f'unsupported provider: {provider}')
     builtins = [metric_class.metric_name for metric_class in BUILTIN_METRICS] if include_builtin_metrics else []
     _reject_bad_metric_names([*builtins, *(metric.name for metric in self._custom_metrics)])
 
@@ -651,7 +660,7 @@ class EvaluationService:
         required_clients(selected_metric_names) if self._include_builtin_metrics else MetricClientRequirements()
       )
       if requirements.judge:
-        judge_client = build_llm_judge_client(self._settings.llm_judge)
+        judge_client = self._build_judge_client()
         if judge_client is not None:
           resources.push_async_callback(judge_client.aclose)
       if requirements.claim_extractor:
@@ -671,6 +680,7 @@ class EvaluationService:
           sample_trace_timeout=sample_trace_timeout,
           sample_compute_timeout=sample_compute_timeout,
           retrieval_span_types=options.retrieval_span_types,
+          judge_client=judge_client,
         ),
         source_run_id=source_run_id,
       )
@@ -759,6 +769,7 @@ class EvaluationService:
     sample_trace_timeout: float | None,
     sample_compute_timeout: float | None,
     retrieval_span_types: Sequence[str],
+    judge_client: LlmJudgeClient | None,
   ) -> dict[str, object | None]:
     provider = self._settings.llm_judge.provider
     model = None
@@ -766,6 +777,8 @@ class EvaluationService:
       model = self._settings.llm_judge.openai.model
     elif provider == 'gemini':
       model = self._settings.llm_judge.gemini.model
+    elif judge_client is not None:
+      model = getattr(judge_client, 'model', None)
 
     return {
       'plan_snapshot_version': 1,
@@ -788,6 +801,11 @@ class EvaluationService:
       },
       'rubric_additions': dict(rubric_additions),
     }
+
+  def _build_judge_client(self) -> LlmJudgeClient | None:
+    config = self._settings.llm_judge
+    factory = self._judge_client_factories.get(config.provider or '')
+    return factory(config) if factory is not None else build_llm_judge_client(config)
 
   def _build_claim_extractor_client(self) -> ClaimExtractorClient | None:
     if self._settings.orbitals.api_key is None:

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from dotenv import load_dotenv
 from pydantic import Field, field_validator, model_validator
@@ -108,7 +108,8 @@ class GeminiJudgeSettings(EnvSettings):
 class LlmJudgeSettings(EnvSettings):
   model_config = SettingsConfigDict(env_prefix='LLM_JUDGE_')
 
-  provider: Literal['openai', 'gemini'] | None = None
+  # 'openai' and 'gemini' are built in; any other name must match an injected judge client factory.
+  provider: str | None = None
   max_concurrent_requests: int = Field(default=5, ge=1)
   openai: OpenAIJudgeSettings = Field(default_factory=OpenAIJudgeSettings)
   gemini: GeminiJudgeSettings = Field(default_factory=GeminiJudgeSettings)
